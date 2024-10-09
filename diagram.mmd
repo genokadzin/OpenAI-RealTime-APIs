@@ -1,0 +1,39 @@
+---
+config:
+  theme: neo-dark
+---
+sequenceDiagram
+    participant AT as Airtable
+    participant H as Handler (Replit)
+    participant T as Twilio
+    participant C as Client (Phone)
+    participant OAI as OpenAI
+    AT->>H: POST /initiate-call
+    Note over AT,H: {phoneNumber, clientInfo}
+    H->>T: Create Call
+    Note over H,T: {to, from, url, statusCallback}
+    T-->>H: Call SID
+    H-->>AT: Call initiated (Call SID)
+    T->>H: GET /outgoing-call-webhook
+    H-->>T: TwiML Response
+    Note over H,T: <Connect><Stream url='wss://...'/>
+    T->>C: Initiate call
+    C-->>T: Answer call
+    T->>H: WebSocket Connection
+    Note over T,H: wss://your-server/media-stream
+    H->>OAI: WebSocket Connection
+    Note over H,OAI: Include clientInfo in system message
+    loop Audio Streaming
+        C->>T: Audio
+        T->>H: Audio chunks
+        H->>OAI: Audio chunks
+        OAI-->>H: Transcription & Response
+        H-->>T: Audio response
+        T-->>C: Audio response
+    end
+    T->>H: POST /call-status
+    Note over T,H: {CallSid, CallStatus}
+    H->>OAI: Process full transcript
+    OAI-->>H: Extracted information
+    H->>AT: Send call summary
+    Note over H,AT: {CallSid, transcript, extractedInfo}

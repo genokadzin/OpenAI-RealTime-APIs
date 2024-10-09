@@ -1,35 +1,48 @@
 import Fastify from 'fastify';
 import WebSocket from 'ws';
-import fs from 'fs';
 import dotenv from 'dotenv';
 import fastifyFormBody from '@fastify/formbody';
 import fastifyWs from '@fastify/websocket';
 import fetch from 'node-fetch';
+import twilio from 'twilio';
+import fs from 'fs/promises';
+import path from 'path';
 
 // Load environment variables from .env file
 dotenv.config();
 
-// Retrieve the OpenAI API key from environment variables
-const { OPENAI_API_KEY } = process.env;
+// ENV keys
+const {OPENAI_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER} = process.env;
 
-if (!OPENAI_API_KEY) {
-    console.error('Missing OpenAI API key. Please set it in the .env file.');
+if (!OPENAI_API_KEY || !TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
+    console.error('Missing required environment variables. Please check your .env file.');
     process.exit(1);
 }
+
+// Initialize Twilio client
+const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 // Initialize Fastify
 const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-// Constants TODO
-// const SYSTEM_MESSAGE = ;
 const VOICE = 'alloy';
 const PORT = process.env.PORT || 5050;
-const WEBHOOK_URL = "<input your webhook URL here>";
+const WEBHOOK_URL = "";
 
 // Session management
 const sessions = new Map();
+
+// Read SYSTEM_MESSAGE from file
+let SYSTEM_MESSAGE = '';
+try {
+    SYSTEM_MESSAGE = await fs.readFile(path.join(process.cwd(), 'main_prompt.md'), 'utf-8');
+    console.log('System message loaded successfully.');
+} catch (error) {
+    console.error('Error reading main_prompt.md:', error);
+    process.exit(1);
+}
 
 // List of Event Types to log to the console
 const LOG_EVENT_TYPES = [
@@ -46,8 +59,75 @@ const LOG_EVENT_TYPES = [
 
 // Root Route
 fastify.get('/', async (request, reply) => {
-    reply.send({ message: 'Twilio Media Stream Server is running!' });
+    reply.send({message: 'Twilio Media Stream Server is running!'});
 });
+
+// Route to initiate an outgoing call
+fastify.post('/initiate-call', async (request, reply) => {
+    const {phoneNumber, clientInfo} = request.body;
+
+    if (!phoneNumber) {
+        return reply.code(400).send({error: 'Phone number is required'});
+    }
+
+    try {
+        const call = await twilioClient.calls.create({
+            url: `https://${request.headers.host}/outgoing-call-webhook`,
+            to: phoneNumber,
+            from: TWILIO_PHONE_NUMBER,
+            statusCallback: `https://${request.headers.host}/call-status`,
+            statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+        });
+
+        // Store client info with the call SID
+        sessions.set(call.sid, {clientInfo, transcript: ''});
+
+        reply.send({message: 'Call initiated', callSid: call.sid});
+    } catch (error) {
+        console.error('Error initiating call:', error);
+        reply.code(500).send({error: 'Failed to initiate call'});
+    }
+});
+
+// Route for outgoing call TwiML
+fastify.all('/outgoing-call-webhook', async (request, reply) => {
+    const callSid = request.body.CallSid;
+    const session = sessions.get(callSid);
+
+    if (!session) {
+        console.error(`No session found for call SID: ${callSid}`);
+        return reply.code(404).send('Session not found');
+    }
+    console.log(`/outgoing-call-webhook: Call ${CallSid}`);
+
+    const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+                          <Response>
+                              <Say>Hello, this is an outgoing call Pizza seller</Say>
+                              <Connect>
+                                  <Stream url="wss://${request.headers.host}/media-stream" />
+                              </Connect>
+                          </Response>`;
+
+    reply.type('text/xml').send(twimlResponse);
+});
+
+
+// Route for call status updates
+fastify.post('/call-status', async (request, reply) => {
+    const {CallSid, CallStatus} = request.body;
+    console.log(`Call ${CallSid} status: ${CallStatus}`);
+
+    if (CallStatus === 'completed') {
+        const session = sessions.get(CallSid);
+        if (session) {
+            await processTranscriptAndSend(session.transcript, CallSid, session.clientInfo);
+            sessions.delete(CallSid);
+        }
+    }
+
+    reply.send({message: 'Status received'});
+});
+
 
 // Route for Twilio to handle incoming and outgoing calls
 fastify.all('/incoming-call', async (request, reply) => {
@@ -66,11 +146,11 @@ fastify.all('/incoming-call', async (request, reply) => {
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
-    fastify.get('/media-stream', { websocket: true }, (connection, req) => {
+    fastify.get('/media-stream', {websocket: true}, (connection, req) => {
         console.log('Client connected');
 
         const sessionId = req.headers['x-twilio-call-sid'] || `session_${Date.now()}`;
-        let session = sessions.get(sessionId) || { transcript: '', streamSid: null };
+        let session = sessions.get(sessionId) || {transcript: '', streamSid: null, clientInfo: {}};
         sessions.set(sessionId, session);
 
         const openAiWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01', {
@@ -81,14 +161,16 @@ fastify.register(async (fastify) => {
         });
 
         const sendSessionUpdate = () => {
+            const clientInfoString = JSON.stringify(session.clientInfo);
+            const customizedSystemMessage = SYSTEM_MESSAGE.replace('{CLIENT_INFO}', clientInfoString);
             const sessionUpdate = {
                 type: 'session.update',
                 session: {
-                    turn_detection: { type: 'server_vad' },
+                    turn_detection: {type: 'server_vad'},
                     input_audio_format: 'g711_ulaw',
                     output_audio_format: 'g711_ulaw',
                     voice: VOICE,
-                    instructions: SYSTEM_MESSAGE,
+                    instructions: customizedSystemMessage,
                     modalities: ["text", "audio"],
                     temperature: 0.8,
                     input_audio_transcription: {
@@ -138,7 +220,7 @@ fastify.register(async (fastify) => {
                     const audioDelta = {
                         event: 'media',
                         streamSid: session.streamSid,
-                        media: { payload: Buffer.from(response.delta, 'base64').toString('base64') }
+                        media: {payload: Buffer.from(response.delta, 'base64').toString('base64')}
                     };
                     connection.send(JSON.stringify(audioDelta));
                 }
@@ -200,7 +282,7 @@ fastify.register(async (fastify) => {
     });
 });
 
-fastify.listen({ port: PORT }, (err) => {
+fastify.listen({port: PORT}, (err) => {
     if (err) {
         console.error(err);
         process.exit(1);
@@ -221,8 +303,11 @@ async function makeChatGPTCompletion(transcript) {
             body: JSON.stringify({
                 model: "gpt-4o-2024-08-06",
                 messages: [
-                    { "role": "system", "content": "Extract customer details: name, availability, and any special notes from the transcript." },
-                    { "role": "user", "content": transcript }
+                    {
+                        "role": "system",
+                        "content": "Extract customer details: name, availability, and any special notes from the transcript."
+                    },
+                    {"role": "user", "content": transcript}
                 ],
                 response_format: {
                     "type": "json_schema",
@@ -231,9 +316,9 @@ async function makeChatGPTCompletion(transcript) {
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "customerName": { "type": "string" },
-                                "customerAvailability": { "type": "string" },
-                                "specialNotes": { "type": "string" }
+                                "customerName": {"type": "string"},
+                                "customerAvailability": {"type": "string"},
+                                "specialNotes": {"type": "string"}
                             },
                             "required": ["customerName", "customerAvailability", "specialNotes"]
                         }
@@ -256,19 +341,22 @@ async function makeChatGPTCompletion(transcript) {
 async function sendToWebhook(payload) {
     console.log('Sending data to webhook:', JSON.stringify(payload, null, 2));
     try {
-        const response = await fetch(WEBHOOK_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
-
-        console.log('Webhook response status:', response.status);
-        if (response.ok) {
-            console.log('Data successfully sent to webhook.');
+        if (WEBHOOK_URL) {
+            const response = await fetch(WEBHOOK_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            console.log('Webhook response status:', response.status);
+            if (response.ok) {
+                console.log('Data successfully sent to webhook.');
+            } else {
+                console.error('Failed to send data to webhook:', response.statusText);
+            }
         } else {
-            console.error('Failed to send data to webhook:', response.statusText);
+            console.log('WEBHOOK_URL is not defined, skipping sendToWebhook')
         }
     } catch (error) {
         console.error('Error sending data to webhook:', error);

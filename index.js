@@ -17,13 +17,15 @@ const {
     TWILIO_ACCOUNT_SID,
     TWILIO_AUTH_TOKEN,
     TWILIO_PHONE_NUMBER,
+    VOICEFLOW_API_KEY
 } = process.env;
 
 if (
     !OPENAI_API_KEY ||
     !TWILIO_ACCOUNT_SID ||
     !TWILIO_AUTH_TOKEN ||
-    !TWILIO_PHONE_NUMBER
+    !TWILIO_PHONE_NUMBER ||
+    !VOICEFLOW_API_KEY
 ) {
     console.error(
         "Missing required environment variables. Please check your .env file.",
@@ -84,6 +86,27 @@ const LOG_EVENT_TYPES = [
     "response.text.done",
     "conversation.item.input_audio_transcription.completed",
 ];
+
+
+const voiceflowFunction = {
+    type: "function",
+    name: "queryVoiceflowAPI",
+    description: "Query the Voiceflow DB to get information about the menu",
+    parameters: {
+        type: "object",
+        properties: {
+            question: {
+                type: "string",
+                description: "The question to ask the Voiceflow"
+            }
+        },
+        required: ["question"]
+    }
+};
+
+
+sessionConfig.tools = [voiceflowFunction];
+sessionConfig.tool_choice = "auto";
 
 // Root Route
 fastify.get("/", async (request, reply) => {
@@ -213,7 +236,7 @@ fastify.register(async (fastify) => {
             );
             try {
                 openAiWs.send(JSON.stringify(sessionUpdate));
-            } catch(error) {
+            } catch (error) {
                 console.error(error);
             }
 
@@ -226,7 +249,7 @@ fastify.register(async (fastify) => {
         });
 
         // Listen for messages from the OpenAI WebSocket
-        openAiWs.on("message", (data) => {
+        openAiWs.on("message", async (data) => {
             try {
                 const response = JSON.parse(data);
 
@@ -274,6 +297,21 @@ fastify.register(async (fastify) => {
                     };
                     connection.send(JSON.stringify(audioDelta));
                 }
+
+                if (response.type === "response.function_call_arguments.done") {
+                    console.log(JSON.stringify(response));
+                    if (response.item_id === "queryVoiceflowAPI") {
+                        const result = await queryVoiceflowAPI(response.arguments.question);
+                        const functionResponse = {
+                            type: "function_response",
+                            id: response.response_id,
+                            response: result
+                        };
+                        console.debug(functionResponse);
+                        openAiWs.send(JSON.stringify(functionResponse));
+                    }
+                }
+
             } catch (error) {
                 console.error(
                     "Error processing OpenAI message:",
@@ -390,7 +428,42 @@ async function sendToWebhook(payload) {
 }
 
 function fillTemplate(template, data) {
-  return template.replace(/\{(\w+)\}/g, (match, key) => {
-    return data.hasOwnProperty(key) ? data[key] : match;
-  });
+    return template.replace(/\{(\w+)\}/g, (match, key) => {
+        return data.hasOwnProperty(key) ? data[key] : match;
+    });
+}
+
+async function queryVoiceflowAPI(question) {
+    console.log('Calling queryVoiceflowAPI')
+    const url = 'https://general-runtime.voiceflow.com/knowledge-base/query';
+    const options = {
+        method: 'POST',
+        headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+            Authorization: `Bearer ${VOICEFLOW_API_KEY}`
+        },
+        body: JSON.stringify({
+            chunkLimit: 3,
+            synthesis: true,
+            settings: {
+                model: "gpt-4",
+                temperature: 0.7,
+                system: "You are an AI FAQ assistant. Information will be provided to help answer the user's questions. Always summarize your response to be as brief as possible and be extremely concise. Your responses should be fewer than a couple of sentences. Do not reference the material provided in your response."
+            },
+            question: question
+        })
+    };
+
+    try {
+        const response = await fetch(url, options);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error querying Voiceflow API:', error);
+        throw error;
+    }
 }

@@ -314,7 +314,7 @@ fastify.register(async (fastify) => {
                             // previous_item_id: response.item_id,
                             item: {
                                 type: "function_call_output",
-                                status: "completed",
+                                // status: "completed",
                                 // name: "queryVoiceflowAPI",
                                 call_id: response.call_id,
                                 output: result.output,
@@ -322,6 +322,21 @@ fastify.register(async (fastify) => {
                         };
                         console.log(JSON.stringify(functionResponse));
                         openAiWs.send(JSON.stringify(functionResponse));
+
+                        const triggerResponse = {
+                            type: "response.create",
+                            response: {
+                                modalities: ["text", "audio"],
+                                instructions: "Use the function output to respond to the user's query. Be concise and directly address the user's question based on the information provided by the Voiceflow API.",
+                                voice: sessionConfig.voice,
+                                output_audio_format: sessionConfig.output_audio_format,
+                                tools: sessionConfig.tools,
+                                tool_choice: sessionConfig.tool_choice,
+                                temperature: 0.7,
+                            }
+                        };
+
+                        openAiWs.send(JSON.stringify(triggerResponse));
                     }
                 }
             } catch (error) {
@@ -460,7 +475,7 @@ async function queryVoiceflowAPI(question) {
             chunkLimit: 3,
             synthesis: true,
             settings: {
-                model: "gpt-4",
+                model: "gpt-4o-mini",
                 temperature: 0.7,
                 system: "You are an AI FAQ assistant. Information will be provided to help answer the user's questions. Always summarize your response to be as brief as possible and be extremely concise. Your responses should be fewer than a couple of sentences. Do not reference the material provided in your response.",
             },

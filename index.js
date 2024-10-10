@@ -39,7 +39,6 @@ const fastify = Fastify();
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 
-const VOICE = process.env.OPENAI_VOICE || "alloy";
 const PORT = process.env.PORT || 5050;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
@@ -56,6 +55,20 @@ try {
     console.log("System message loaded successfully.");
 } catch (error) {
     console.error("Error reading main_prompt.md:", error);
+    process.exit(1);
+}
+
+
+let sessionConfig;
+try {
+    const configFile = await fs.readFile(
+        path.join(process.cwd(), "openai_config.json"),
+        "utf-8"
+    );
+    sessionConfig = JSON.parse(configFile);
+    console.log("Session configuration loaded successfully.");
+} catch (error) {
+    console.error("Error reading session_config.json:", error);
     process.exit(1);
 }
 
@@ -124,6 +137,8 @@ fastify.all("/outgoing-call-webhook", async (request, reply) => {
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
+                              <Say>Hi! We are connecting you, wait a moment</Say>
+                              <Pause length="1"/>
                               <Connect>
                                   <Stream url="wss://${request.headers.host}/media-stream" />
                               </Connect>
@@ -186,29 +201,22 @@ fastify.register(async (fastify) => {
         let session;
 
         const sendSessionUpdate = () => {
-            const customizedSystemMessage = fillTemplate(SYSTEM_MESSAGE, session.clientInfo);
-            // console.log(customizedSystemMessage);
+            sessionConfig.instructions = fillTemplate(SYSTEM_MESSAGE, session.clientInfo);
             const sessionUpdate = {
                 type: "session.update",
-                session: {
-                    turn_detection: {type: "server_vad"},
-                    input_audio_format: "g711_ulaw",
-                    output_audio_format: "g711_ulaw",
-                    voice: VOICE,
-                    instructions: customizedSystemMessage,
-                    modalities: ["text", "audio"],
-                    temperature: 0.8,
-                    input_audio_transcription: {
-                        model: "whisper-1",
-                    },
-                },
+                session: sessionConfig,
             };
 
             console.log(
                 "Sending session update:",
                 JSON.stringify(sessionUpdate),
             );
-            openAiWs.send(JSON.stringify(sessionUpdate));
+            try {
+                openAiWs.send(JSON.stringify(sessionUpdate));
+            } catch(error) {
+                console.error(error);
+            }
+
         };
 
         // Open event for OpenAI WebSocket

@@ -33,7 +33,5 @@ sequenceDiagram
     end
     T->>H: POST /call-status
     Note over T,H: {CallSid, CallStatus}
-    H->>OAI: Process full transcript
-    OAI-->>H: Extracted information
     H->>AT: Send call summary
-    Note over H,AT: {CallSid, transcript, extractedInfo}
+    Note over H,AT: {CallSid, transcript, clientInfo}

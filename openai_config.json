@@ -16,8 +16,5 @@
     "prefix_padding_ms": 300,
     "silence_duration_ms": 200
   },
-  "tools": [],
-  "tool_choice": "auto",
-  "temperature": 0.8,
-  "max_output_tokens": null
+  "temperature": 0.8
 }

@@ -17,7 +17,7 @@ const {
     TWILIO_ACCOUNT_SID,
     TWILIO_AUTH_TOKEN,
     TWILIO_PHONE_NUMBER,
-    VOICEFLOW_API_KEY
+    VOICEFLOW_API_KEY,
 } = process.env;
 
 if (
@@ -61,12 +61,11 @@ try {
     process.exit(1);
 }
 
-
 let sessionConfig;
 try {
     const configFile = await fs.readFile(
         path.join(process.cwd(), "openai_config.json"),
-        "utf-8"
+        "utf-8",
     );
     sessionConfig = JSON.parse(configFile);
     console.log("Session configuration loaded successfully.");
@@ -98,33 +97,31 @@ if (VOICEFLOW_DESC) {
             properties: {
                 question: {
                     type: "string",
-                    description: "The question to ask the Voiceflow"
-                }
+                    description: "The question to ask the Voiceflow",
+                },
             },
-            required: ["question"]
-        }
+            required: ["question"],
+        },
     };
-
 
     sessionConfig.tools = [voiceflowFunction];
     sessionConfig.tool_choice = "auto";
 } else {
-    console.log("VOICEFLOW_DESC is not provided, function calling is disabled")
+    console.log("VOICEFLOW_DESC is not provided, function calling is disabled");
 }
-
 
 // Root Route
 fastify.get("/", async (request, reply) => {
-    reply.send({message: "Twilio Media Stream Server is running!"});
+    reply.send({ message: "Twilio Media Stream Server is running!" });
 });
 
 // Route to initiate an outgoing call
 fastify.post("/initiate-call", async (request, reply) => {
-    const {phoneNumber, clientInfo} = request.body;
+    const { phoneNumber, clientInfo } = request.body;
     console.log("Received request to initiate call:", phoneNumber, clientInfo);
 
     if (!phoneNumber) {
-        return reply.code(400).send({error: "Phone number is required"});
+        return reply.code(400).send({ error: "Phone number is required" });
     }
 
     try {
@@ -141,13 +138,13 @@ fastify.post("/initiate-call", async (request, reply) => {
             ],
         });
         // Store client info with the call SID
-        sessions.set(call.sid, {clientInfo, transcript: ""});
+        sessions.set(call.sid, { clientInfo, transcript: "" });
         // console.debug(sessions);
 
-        reply.send({message: "Call initiated", callSid: call.sid});
+        reply.send({ message: "Call initiated", callSid: call.sid });
     } catch (error) {
         console.error("Error initiating call:", error);
-        reply.code(500).send({error: "Failed to initiate call"});
+        reply.code(500).send({ error: "Failed to initiate call" });
     }
 });
 
@@ -177,7 +174,7 @@ fastify.all("/outgoing-call-webhook", async (request, reply) => {
 
 // Route for call status updates
 fastify.post("/call-status", async (request, reply) => {
-    const {CallSid, CallStatus} = request.body;
+    const { CallSid, CallStatus } = request.body;
     console.log(`Call ${CallSid} status: ${CallStatus}`);
 
     if (CallStatus === "completed") {
@@ -192,7 +189,7 @@ fastify.post("/call-status", async (request, reply) => {
         }
     }
 
-    reply.send({message: "Status received"});
+    reply.send({ message: "Status received" });
 });
 
 // Route for Twilio to handle incoming and outgoing calls
@@ -212,8 +209,8 @@ fastify.all("/incoming-call", async (request, reply) => {
 
 // WebSocket route for media-stream
 fastify.register(async (fastify) => {
-    fastify.get("/media-stream", {websocket: true}, (connection, req) => {
-        console.log('Client connected');
+    fastify.get("/media-stream", { websocket: true }, (connection, req) => {
+        console.log("Client connected");
 
         const openAiWs = new WebSocket(
             "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
@@ -229,7 +226,10 @@ fastify.register(async (fastify) => {
         let session;
 
         const sendSessionUpdate = () => {
-            sessionConfig.instructions = fillTemplate(SYSTEM_MESSAGE, session.clientInfo);
+            sessionConfig.instructions = fillTemplate(
+                SYSTEM_MESSAGE,
+                session.clientInfo,
+            );
             const sessionUpdate = {
                 type: "session.update",
                 session: sessionConfig,
@@ -244,7 +244,6 @@ fastify.register(async (fastify) => {
             } catch (error) {
                 console.error(error);
             }
-
         };
 
         // Open event for OpenAI WebSocket
@@ -308,23 +307,23 @@ fastify.register(async (fastify) => {
                     if (response.name === "queryVoiceflowAPI") {
                         const args = JSON.parse(response.arguments);
                         const result = await queryVoiceflowAPI(args.question);
-                        // result.content = 'No, there is no delivery in Washington';
+                        // console.log(JSON.stringify(result));
+                        // result.output = 'No, there is no delivery in Washington';
                         const functionResponse = {
                             type: "conversation.item.create",
                             // previous_item_id: response.item_id,
                             item: {
                                 type: "function_call_output",
-                                // status: "completed",
+                                status: "completed",
                                 // name: "queryVoiceflowAPI",
                                 call_id: response.call_id,
-                                output: result.content,
-                            }
+                                output: result.output,
+                            },
                         };
                         console.log(JSON.stringify(functionResponse));
                         openAiWs.send(JSON.stringify(functionResponse));
                     }
                 }
-
             } catch (error) {
                 console.error(
                     "Error processing OpenAI message:",
@@ -354,12 +353,14 @@ fastify.register(async (fastify) => {
                     case "start":
                         sessionId = data.start.callSid;
                         const streamSid = data.start.streamSid;
-                        console.log(`Call started - CallSid: ${sessionId}, StreamSid: ${streamSid}`);
+                        console.log(
+                            `Call started - CallSid: ${sessionId}, StreamSid: ${streamSid}`,
+                        );
 
                         // Retrieve or create session
                         session = sessions.get(sessionId) || {
-                            transcript: '',
-                            clientInfo: data.start.customParameters || {}
+                            transcript: "",
+                            clientInfo: data.start.customParameters || {},
                         };
                         session.streamSid = streamSid;
                         sessions.set(sessionId, session);
@@ -402,14 +403,13 @@ fastify.register(async (fastify) => {
     });
 });
 
-fastify.listen({port: PORT}, (err) => {
+fastify.listen({ port: PORT }, (err) => {
     if (err) {
         console.error(err);
         process.exit(1);
     }
     console.log(`Server is listening on port ${PORT}`);
 });
-
 
 // Function to send data to Make.com webhook
 async function sendToWebhook(payload) {
@@ -447,14 +447,14 @@ function fillTemplate(template, data) {
 }
 
 async function queryVoiceflowAPI(question) {
-    console.log(`Calling queryVoiceflowAPI with question ${question}`)
-    const url = 'https://general-runtime.voiceflow.com/knowledge-base/query';
+    console.log(`Calling queryVoiceflowAPI with question ${question}`);
+    const url = "https://general-runtime.voiceflow.com/knowledge-base/query";
     const options = {
-        method: 'POST',
+        method: "POST",
         headers: {
-            accept: 'application/json',
-            'content-type': 'application/json',
-            Authorization: `${VOICEFLOW_API_KEY}`
+            accept: "application/json",
+            "content-type": "application/json",
+            Authorization: `${VOICEFLOW_API_KEY}`,
         },
         body: JSON.stringify({
             chunkLimit: 3,
@@ -462,13 +462,14 @@ async function queryVoiceflowAPI(question) {
             settings: {
                 model: "gpt-4",
                 temperature: 0.7,
-                system: "You are an AI FAQ assistant. Information will be provided to help answer the user's questions. Always summarize your response to be as brief as possible and be extremely concise. Your responses should be fewer than a couple of sentences. Do not reference the material provided in your response."
+                system: "You are an AI FAQ assistant. Information will be provided to help answer the user's questions. Always summarize your response to be as brief as possible and be extremely concise. Your responses should be fewer than a couple of sentences. Do not reference the material provided in your response.",
             },
-            question: question
-        })
+            question: question,
+        }),
     };
 
     try {
+        console.log(JSON.stringify(options));
         const response = await fetch(url, options);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -476,7 +477,7 @@ async function queryVoiceflowAPI(question) {
         const data = await response.json();
         return data;
     } catch (error) {
-        console.error('Error querying Voiceflow API:', error);
+        console.error("Error querying Voiceflow API:", error);
         throw error;
     }
 }

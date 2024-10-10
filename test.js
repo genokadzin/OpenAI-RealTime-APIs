@@ -19,8 +19,12 @@ async function initiateCall(phoneNumber, clientInfo) {
   return result;
 }
 
+import dotenv from "dotenv";
+dotenv.config();
+const VOICEFLOW_DESC = process.env.VOICEFLOW_DESC;
+const a = 5;
 // Example usage:
 const result = initiateCall('+17159524991',
-    { Name: 'John', Age: 20,  AccountId: '12345'});
+    { firstName: 'John',  AccountId: '12345'});
 console.log(result)
 

@@ -64,10 +64,24 @@ This function sends a POST request to the `/initiate-call` endpoint with the fol
 
 The server will use this information to initiate the call through Twilio and set up the context for the conversation.
 
-## 3. Updating the Prompt and OpenAI Key
+## 3. Updating the Prompt and OpenAI Config
 
 The system prompt is stored in the `main_prompt.md` file in the root directory of the project.
-The OpenAI API key is stored in the `.env` file in `OPENAI_API_KEY=`.
+
+RealTimeAPI session configuration is stored in `openai_config.json` file;
+
+## 4. Provide keys
+Create `.env` file in the root directory.
+Provide all necessary keys. `VOICEFLOW_DESC` and `WEBHOOK_URL` are Optional.
+```
+OPENAI_API_KEY=
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_PHONE_NUMBER=
+VOICEFLOW_API_KEY=
+VOICEFLOW_DESC=
+WEBHOOK_URL=
+```
 
 ## Note
 

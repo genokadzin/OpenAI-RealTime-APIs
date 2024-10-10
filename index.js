@@ -43,6 +43,7 @@ fastify.register(fastifyWs);
 
 const PORT = process.env.PORT || 5050;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
+const VOICEFLOW_DESC = process.env.VOICEFLOW_DESC;
 
 // Session management
 const sessions = new Map();
@@ -87,26 +88,30 @@ const LOG_EVENT_TYPES = [
     "conversation.item.input_audio_transcription.completed",
 ];
 
+if (VOICEFLOW_DESC) {
+    const voiceflowFunction = {
+        type: "function",
+        name: "queryVoiceflowAPI",
+        description: VOICEFLOW_DESC,
+        parameters: {
+            type: "object",
+            properties: {
+                question: {
+                    type: "string",
+                    description: "The question to ask the Voiceflow"
+                }
+            },
+            required: ["question"]
+        }
+    };
 
-const voiceflowFunction = {
-    type: "function",
-    name: "queryVoiceflowAPI",
-    description: "Query the Voiceflow DB to get information about the menu",
-    parameters: {
-        type: "object",
-        properties: {
-            question: {
-                type: "string",
-                description: "The question to ask the Voiceflow"
-            }
-        },
-        required: ["question"]
-    }
-};
 
+    sessionConfig.tools = [voiceflowFunction];
+    sessionConfig.tool_choice = "auto";
+} else {
+    console.log("VOICEFLOW_DESC is not provided, function calling is disabled")
+}
 
-sessionConfig.tools = [voiceflowFunction];
-sessionConfig.tool_choice = "auto";
 
 // Root Route
 fastify.get("/", async (request, reply) => {
@@ -300,14 +305,22 @@ fastify.register(async (fastify) => {
 
                 if (response.type === "response.function_call_arguments.done") {
                     console.log(JSON.stringify(response));
-                    if (response.item_id === "queryVoiceflowAPI") {
-                        const result = await queryVoiceflowAPI(response.arguments.question);
+                    if (response.name === "queryVoiceflowAPI") {
+                        const args = JSON.parse(response.arguments);
+                        const result = await queryVoiceflowAPI(args.question);
+                        // result.content = 'No, there is no delivery in Washington';
                         const functionResponse = {
-                            type: "function_response",
-                            id: response.response_id,
-                            response: result
+                            type: "conversation.item.create",
+                            // previous_item_id: response.item_id,
+                            item: {
+                                type: "function_call_output",
+                                // status: "completed",
+                                // name: "queryVoiceflowAPI",
+                                call_id: response.call_id,
+                                output: result.content,
+                            }
                         };
-                        console.debug(functionResponse);
+                        console.log(JSON.stringify(functionResponse));
                         openAiWs.send(JSON.stringify(functionResponse));
                     }
                 }
@@ -434,14 +447,14 @@ function fillTemplate(template, data) {
 }
 
 async function queryVoiceflowAPI(question) {
-    console.log('Calling queryVoiceflowAPI')
+    console.log(`Calling queryVoiceflowAPI with question ${question}`)
     const url = 'https://general-runtime.voiceflow.com/knowledge-base/query';
     const options = {
         method: 'POST',
         headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            Authorization: `Bearer ${VOICEFLOW_API_KEY}`
+            Authorization: `${VOICEFLOW_API_KEY}`
         },
         body: JSON.stringify({
             chunkLimit: 3,

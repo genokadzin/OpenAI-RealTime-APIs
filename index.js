@@ -162,8 +162,6 @@ fastify.all("/outgoing-call-webhook", async (request, reply) => {
 
     const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
                           <Response>
-                              <Say>Hi! We are connecting you, wait a moment</Say>
-                              <Pause length="1"/>
                               <Connect>
                                   <Stream url="wss://${request.headers.host}/media-stream" />
                               </Connect>
@@ -246,6 +244,29 @@ fastify.register(async (fastify) => {
             }
         };
 
+        const startMessage = () => {
+            const startResponse = {
+                type: "response.create",
+                response: {
+                    modalities: ["text", "audio"],
+                    instructions: `${sessionConfig.instructions} \n---\n Start the conversation by greeting the user and briefly introducing yourself. Keep it concise.`,
+                    voice: sessionConfig.voice,
+                    output_audio_format: sessionConfig.output_audio_format,
+                    tools: sessionConfig.tools,
+                    tool_choice: sessionConfig.tool_choice,
+                    temperature: 0.7,
+                }
+            };
+
+            console.log("Sending response event to start conversation");
+            try {
+                openAiWs.send(JSON.stringify(startResponse));
+            } catch (error) {
+                console.error(error);
+            }
+        };
+
+
         // Open event for OpenAI WebSocket
         openAiWs.on("open", () => {
             console.log("Connected to the OpenAI Realtime API");
@@ -283,6 +304,13 @@ fastify.register(async (fastify) => {
 
                 if (response.type === "session.updated") {
                     console.log("Session updated successfully:", response);
+                    startMessage();
+                }
+
+                if (response.type === "response.text.delta" &&
+                    response.delta
+                ) {
+                    console.log(`text delta: ${response.delta}`)
                 }
 
                 if (
